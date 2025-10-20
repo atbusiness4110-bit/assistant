@@ -1,59 +1,55 @@
 from flask import Flask, request, jsonify
-import os
+from datetime import datetime
 
 app = Flask(__name__)
 
-# Define the list outside the route so it persists while the server runs
-calls = []
+calls = []  # List to store final call summaries only
 
-@app.route('/')
-def home():
-    return jsonify({"message": "✅ Law Firm API is running!"})
-
-@app.route("/vapi/callback", methods=["POST"])
+@app.route('/vapi/callback', methods=['POST'])
 def vapi_callback():
-    data = request.get_json(force=True, silent=True)
-    if not data:
-        return jsonify({"status": "no data"}), 400
-
     try:
-        # Handle array payloads or single message
-        if isinstance(data, list):
-            # Only take the last summary where the call has ended
-            final_summaries = [item for item in data if item.get("ended_reason")]
-            if final_summaries:
-                latest = final_summaries[-1]
-            else:
-                latest = data[-1]
-        else:
-            latest = data
+        data = request.get_json()
 
-        summary_text = latest.get("summary", "No summary provided")
+        # Handle array or single payload from Vapi
+        entries = data if isinstance(data, list) else [data]
+
+        final_entries = [
+            e for e in entries if e.get("ended_reason")  # Only when call is ended
+        ]
+
+        if not final_entries:
+            print("⏳ Ignoring mid-call update...")
+            return jsonify({"message": "Ignored mid-call update"}), 200
+
+        latest = final_entries[-1]
+
         call_id = latest.get("call_id", "Unknown")
-        assistant_name = latest.get("assistant", "Unknown")
+        assistant = latest.get("assistant", "Unknown")
+        summary = latest.get("summary", "No summary available")
 
-        # Log cleanly
-        print(f"📞 Final summary from {assistant_name} ({call_id}): {summary_text}")
+        print(f"📞 Final summary from {assistant} ({call_id}): {summary}")
 
-        # Store or serve minimal data to frontend
-        summaries.append({
-            "assistant": assistant_name,
-            "call_id": call_id,
-            "summary": summary_text,
-            "timestamp": latest.get("timestamp")
+        # For now, fill placeholders for name/phone until we parse them
+        calls.append({
+            "name": "Unknown",
+            "phone": "Unknown",
+            "reason": summary,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
 
-        return jsonify({"status": "ok", "received": summary_text})
+        return jsonify({"message": "Final summary saved"}), 200
 
     except Exception as e:
-        print("⚠️ Error parsing callback:", e)
+        print(f"⚠️ Error parsing callback: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/calls', methods=['GET'])
 def get_calls():
-    return jsonify(calls)
+    return jsonify(calls), 200
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+
+@app.route('/')
+def home():
+    return jsonify({"message": "✅ Law Firm API is running!"})
+
