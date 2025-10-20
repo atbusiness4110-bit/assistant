@@ -1,43 +1,43 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
+import re
 
 app = Flask(__name__)
 
-calls = []  # List to store final call summaries only
+calls = []  # Only store final call summaries
+
 
 @app.route('/vapi/callback', methods=['POST'])
 def vapi_callback():
     try:
         data = request.get_json()
-
-        # Handle array or single payload from Vapi
         entries = data if isinstance(data, list) else [data]
 
-        final_entries = [
-            e for e in entries if e.get("ended_reason")  # Only when call is ended
-        ]
-
+        # Only process at end of call
+        final_entries = [e for e in entries if e.get("ended_reason")]
         if not final_entries:
-            print("⏳ Ignoring mid-call update...")
+            print("⏳ Ignoring in-progress summaries...")
             return jsonify({"message": "Ignored mid-call update"}), 200
 
         latest = final_entries[-1]
+        summary = latest.get("summary", "")
 
-        call_id = latest.get("call_id", "Unknown")
-        assistant = latest.get("assistant", "Unknown")
-        summary = latest.get("summary", "No summary available")
+        # Try to extract name and phone
+        name_match = re.search(r"(?:Mr\.|Mrs\.|Ms\.|Mister)?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", summary)
+        phone_match = re.search(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b", summary)
 
-        print(f"📞 Final summary from {assistant} ({call_id}): {summary}")
+        name = name_match.group(1) if name_match else "Unknown"
+        phone = phone_match.group(0) if phone_match else "Unknown"
 
-        # For now, fill placeholders for name/phone until we parse them
+        print(f"📞 FINAL CALL — Name: {name}, Phone: {phone}")
+
         calls.append({
-            "name": "Unknown",
-            "phone": "Unknown",
-            "reason": summary,
+            "name": name,
+            "phone": phone,
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
 
-        return jsonify({"message": "Final summary saved"}), 200
+        return jsonify({"message": "Final call data stored"}), 200
 
     except Exception as e:
         print(f"⚠️ Error parsing callback: {e}")
