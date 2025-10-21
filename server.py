@@ -1,153 +1,64 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
 import re
+import traceback
 
-# ---------------------------
-# Flask App Initialization
-# ---------------------------
 app = Flask(__name__)
-
-# Store call summaries in memory
-calls = []
-
-# ---------------------------
-# ROUTE 1: Root (health check)
-# ---------------------------
-@app.route('/')
-def home():
-    return jsonify({"message": "✅ Law Firm API is running!"}), 200
+calls = []  # Store calls temporarily; can be replaced with a DB later
 
 
-# ---------------------------
-# ROUTE 2: Retrieve call records
-# ---------------------------
-@app.route('/calls', methods=['GET'])
-def get_calls():
-    """
-    Returns all recorded calls (name, phone, timestamp)
-    """
-    return jsonify(calls), 200
-
-
-# ---------------------------
-# ROUTE 3: Receive Vapi Webhook
-# ---------------------------
-@app.route('/vapi/callback', methods=['POST'])
+@app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
-    """
-    Receives webhook data from Vapi and records caller info
-    ONLY after the call has fully ended.
-    """
+    data = request.json
     try:
-        data = request.get_json()
-        print("📩 Received webhook payload:", data)
+        call_id = data.get("call_id", "unknown")
+        messages = data.get("messages", [])
+        name = None
+        phone = None
 
-        entries = data if isinstance(data, list) else [data]
+        # Loop through all messages and intelligently detect name + phone
+        for msg in messages:
+            text = msg.get("message", "").strip()
+            lower = text.lower()
 
-        for entry in entries:
-            msg = entry.get("message", {})
-            status = msg.get("status")
-            ended_reason = msg.get("endedReason")
+            # Detect possible name statements (many variations)
+            if any(keyword in lower for keyword in ["name", "i am", "i'm", "this is", "call me", "myself"]):
+                # Extract capitalized word(s) that look like names
+                possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
+                if possible_names:
+                    # Avoid common words that aren't names
+                    filtered = [n for n in possible_names if n.lower() not in ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon"]]
+                    if filtered:
+                        name = " ".join(filtered[:2])  # Support first + last name
+                        print(f"[🧠 Detected name: {name}]")
 
-            # Only record once call has ended
-            if status == "ended" or ended_reason:
-                print("✅ Call end detected")
+            # Detect possible phone numbers (extract digits)
+            digits = re.sub(r"\D", "", text)
+            if len(digits) >= 7:
+                phone = digits
 
-                # --- Extract message data ---
-                summary_text = entry.get("summary", "")
-                artifact = msg.get("artifact", {})
-                messages = artifact.get("messages", [])
+        # Record only at the end of the call
+        if data.get("status", "").lower() == "ended":
+            entry = {
+                "name": name or "Unknown",
+                "phone": phone or "Unknown",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
 
-                extracted_name = None
-                extracted_phone = None
+            print(f"📞 FINAL CALL — Name: {entry['name']}, Phone: {entry['phone']}")
+            calls.append(entry)
 
-                # Combine all text content
-                all_text = " ".join(
-                    m.get("message", "") for m in messages
-                ) + " " + summary_text
-                all_text = re.sub(r"\s+", " ", all_text).strip()
-
-                # ---------------------------
-                # 1️⃣ Extract Name
-                # ---------------------------
-                name_match = re.search(
-                    r"(?:my name is|this is|i am)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
-                    all_text, re.I
-                )
-                if name_match:
-                    extracted_name = name_match.group(1).strip()
-
-                # ---------------------------
-                # 2️⃣ Extract Phone Number
-                # ---------------------------
-                phone_match = re.search(
-                    r"(\+?\d[\d\s\-]{6,})", all_text
-                )
-                if phone_match:
-                    extracted_phone = re.sub(r"[^\d\+]", "", phone_match.group(1))
-
-                # ---------------------------
-                # 3️⃣ Fallback: Try from summary
-                # ---------------------------
-                if not extracted_name or not extracted_phone:
-                    if summary_text:
-                        print("🧾 SUMMARY TEXT:", summary_text)
-
-                        if not extracted_name:
-                            m = re.search(
-                                r"(?:name\s*[:\-]?\s*)([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
-                                summary_text, re.I
-                            )
-                            if m:
-                                extracted_name = m.group(1)
-
-                        if not extracted_phone:
-                            m = re.search(
-                                r"(?:phone|number)\s*[:\-]?\s*(\+?\d[\d\s\-]{7,})",
-                                summary_text, re.I
-                            )
-                            if m:
-                                extracted_phone = re.sub(r"[^\d\+]", "", m.group(1))
-
-                # ---------------------------
-                # 4️⃣ Defaults if missing
-                # ---------------------------
-                name = extracted_name or "Unknown"
-                phone = extracted_phone or "Unknown"
-
-                # ---------------------------
-                # 5️⃣ Add timestamp
-                # ---------------------------
-                timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-
-                call_record = {
-                    "name": name,
-                    "phone": phone,
-                    "time": timestamp
-                }
-                calls.append(call_record)
-
-                # ---------------------------
-                # 6️⃣ Log to Render console
-                # ---------------------------
-                print(f"📞 FINAL CALL — Name: {name}, Phone: {phone}, Time: {timestamp}")
-                print("-" * 60)
-
-                return jsonify({"message": "Final call recorded"}), 200
-
-        # Ignore interim messages
-        print("⏳ Ignored non-final webhook event.")
-        return jsonify({"message": "Ignored non-final webhook"}), 200
-
+        return jsonify({"ok": True})
     except Exception as e:
-        print(f"⚠️ Error parsing callback: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
-# ---------------------------
-# Local Development Entry Point
-# ---------------------------
-if __name__ == '__main__':
-    # For local testing
-    app.run(host='0.0.0.0', port=10000)
+@app.route("/calls", methods=["GET"])
+def get_calls():
+    return jsonify(calls)
 
+
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "✅ Law Firm API is running!"})
