@@ -60,21 +60,35 @@ def vapi_callback():
                 extracted_name = None
                 extracted_phone = None
 
-                for m in messages:
-                    message_text = m.get("message", "")
-                    lowered = message_text.lower()
+                # Combine all text from the call
+                all_text = " ".join(
+                    m.get("message", "") for m in messages
+                ) + " " + summary_text
 
-                    # Look for caller's name
-                    if "name" in lowered:
-                        match = re.search(r"(?:name\s*[:\-]?\s*)([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)", message_text, re.I)
-                        if match:
-                            extracted_name = match.group(1)
+                # --- Clean up whitespace ---
+                all_text = re.sub(r"\s+", " ", all_text).strip()
 
-                    # Look for phone or number
-                    if "phone" in lowered or "number" in lowered:
-                        match = re.search(r"(?:phone|number)\s*[:\-]?\s*(\+?\d[\d\s\-]{7,})", message_text, re.I)
-                        if match:
-                            extracted_phone = match.group(1)
+                # --- Try to extract name ---
+                # Handles: "My name is Sarah Jacobs" or "This is John"
+                name_match = re.search(
+                    r"(?:my name is|this is|i am)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
+                    all_text,
+                    re.I
+                )
+                if name_match:
+                    extracted_name = name_match.group(1).strip()
+
+                # --- Try to extract phone ---
+                # Handles formats like:
+                # "4037757197", "403 775 7197", "+1 403-775-7197"
+                phone_match = re.search(
+                    r"(\+?\d[\d\s\-]{6,})",
+                    all_text
+                )
+                if phone_match:
+                    # Clean spaces and dashes
+                    extracted_phone = re.sub(r"[^\d\+]", "", phone_match.group(1))
+
 
                 # ---------------------------
                 # 2️⃣ Fallback: Extract from summary text
@@ -132,6 +146,7 @@ def vapi_callback():
 # ---------------------------
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
+
 
 
 
