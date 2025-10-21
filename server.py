@@ -15,14 +15,19 @@ calls = []
 # ---------------------------
 @app.route('/')
 def home():
-    return jsonify({"message": "✅ Law Firm API is running!"})
+    return jsonify({"message": "✅ Law Firm API is running!"}), 200
+
 
 # ---------------------------
 # ROUTE 2: Retrieve call records
 # ---------------------------
 @app.route('/calls', methods=['GET'])
 def get_calls():
+    """
+    Returns all recorded calls (name, phone, timestamp)
+    """
     return jsonify(calls), 200
+
 
 # ---------------------------
 # ROUTE 3: Receive Vapi Webhook
@@ -37,7 +42,6 @@ def vapi_callback():
         data = request.get_json()
         print("📩 Received webhook payload:", data)
 
-        # Vapi can send a dict or list of messages
         entries = data if isinstance(data, list) else [data]
 
         for entry in entries:
@@ -45,94 +49,93 @@ def vapi_callback():
             status = msg.get("status")
             ended_reason = msg.get("endedReason")
 
-            # Only process once call is marked as ended
+            # Only record once call has ended
             if status == "ended" or ended_reason:
-                print("✅ Call ended detected")
+                print("✅ Call end detected")
 
-                # Try to pull relevant text data
+                # --- Extract message data ---
                 summary_text = entry.get("summary", "")
                 artifact = msg.get("artifact", {})
                 messages = artifact.get("messages", [])
 
-                # ---------------------------
-                # 1️⃣ Extract name & phone from messages
-                # ---------------------------
                 extracted_name = None
                 extracted_phone = None
 
-                # Combine all text from the call
+                # Combine all text content
                 all_text = " ".join(
                     m.get("message", "") for m in messages
                 ) + " " + summary_text
-
-                # --- Clean up whitespace ---
                 all_text = re.sub(r"\s+", " ", all_text).strip()
 
-                # --- Try to extract name ---
-                # Handles: "My name is Sarah Jacobs" or "This is John"
+                # ---------------------------
+                # 1️⃣ Extract Name
+                # ---------------------------
                 name_match = re.search(
                     r"(?:my name is|this is|i am)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
-                    all_text,
-                    re.I
+                    all_text, re.I
                 )
                 if name_match:
                     extracted_name = name_match.group(1).strip()
 
-                # --- Try to extract phone ---
-                # Handles formats like:
-                # "4037757197", "403 775 7197", "+1 403-775-7197"
+                # ---------------------------
+                # 2️⃣ Extract Phone Number
+                # ---------------------------
                 phone_match = re.search(
-                    r"(\+?\d[\d\s\-]{6,})",
-                    all_text
+                    r"(\+?\d[\d\s\-]{6,})", all_text
                 )
                 if phone_match:
-                    # Clean spaces and dashes
                     extracted_phone = re.sub(r"[^\d\+]", "", phone_match.group(1))
 
-
                 # ---------------------------
-                # 2️⃣ Fallback: Extract from summary text
+                # 3️⃣ Fallback: Try from summary
                 # ---------------------------
                 if not extracted_name or not extracted_phone:
-                    summary_text = summary_text or ""
-                    print("🧾 SUMMARY TEXT CANDIDATE:", summary_text)
+                    if summary_text:
+                        print("🧾 SUMMARY TEXT:", summary_text)
 
-                    if not extracted_name:
-                        match = re.search(r"(?:name\s*[:\-]?\s*)([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", summary_text, re.I)
-                        if match:
-                            extracted_name = match.group(1)
+                        if not extracted_name:
+                            m = re.search(
+                                r"(?:name\s*[:\-]?\s*)([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
+                                summary_text, re.I
+                            )
+                            if m:
+                                extracted_name = m.group(1)
 
-                    if not extracted_phone:
-                        match = re.search(r"(?:phone|number)\s*[:\-]?\s*(\+?\d[\d\s\-]{7,})", summary_text, re.I)
-                        if match:
-                            extracted_phone = match.group(1)
+                        if not extracted_phone:
+                            m = re.search(
+                                r"(?:phone|number)\s*[:\-]?\s*(\+?\d[\d\s\-]{7,})",
+                                summary_text, re.I
+                            )
+                            if m:
+                                extracted_phone = re.sub(r"[^\d\+]", "", m.group(1))
 
                 # ---------------------------
-                # 3️⃣ Default if missing
+                # 4️⃣ Defaults if missing
                 # ---------------------------
                 name = extracted_name or "Unknown"
                 phone = extracted_phone or "Unknown"
 
                 # ---------------------------
-                # 4️⃣ Save the record
+                # 5️⃣ Add timestamp
                 # ---------------------------
+                timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
                 call_record = {
                     "name": name,
                     "phone": phone,
-                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    "time": timestamp
                 }
                 calls.append(call_record)
 
                 # ---------------------------
-                # 5️⃣ Log for Render visibility
+                # 6️⃣ Log to Render console
                 # ---------------------------
-                print(f"📞 FINAL CALL — Name: {name}, Phone: {phone}")
-                print(f"🕒 Timestamp: {call_record['time']}")
-                print("-" * 50)
+                print(f"📞 FINAL CALL — Name: {name}, Phone: {phone}, Time: {timestamp}")
+                print("-" * 60)
 
                 return jsonify({"message": "Final call recorded"}), 200
 
-        # If not ended, ignore
+        # Ignore interim messages
         print("⏳ Ignored non-final webhook event.")
         return jsonify({"message": "Ignored non-final webhook"}), 200
 
@@ -142,13 +145,9 @@ def vapi_callback():
 
 
 # ---------------------------
-# Local development run mode
+# Local Development Entry Point
 # ---------------------------
 if __name__ == '__main__':
+    # For local testing
     app.run(host='0.0.0.0', port=10000)
-
-
-
-
-
 
