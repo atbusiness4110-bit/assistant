@@ -37,53 +37,33 @@ def within_active_hours():
 
 
 def load_data():
-    """Load calls and settings safely from disk."""
-    global calls, settings
+    """Always load calls from disk before using."""
+    global calls
     try:
-        with lock:
-            if os.path.exists(CALLS_FILE):
-                with open(CALLS_FILE, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        calls[:] = data
-                    else:
-                        print("⚠️ CALLS_FILE data invalid, resetting.")
-                        calls[:] = []
-            else:
-                calls[:] = []
-
-            if os.path.exists(SETTINGS_FILE):
-                with open(SETTINGS_FILE, "r") as f:
-                    s = json.load(f)
-                    if isinstance(s, dict):
-                        settings.update(s)
-
-        print(f"📂 Loaded {len(calls)} call(s).")
+        if os.path.exists(CALLS_FILE):
+            with open(CALLS_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    calls = data
+        else:
+            calls = []
     except Exception as e:
         print(f"⚠️ Error loading data: {e}")
-        calls[:] = []
-
+        calls = []
 
 def save_data():
-    """Always save to disk safely — never overwrite with empty."""
+    """Atomically save current calls to disk."""
+    global calls
     try:
         with lock:
-            # Only save if calls exist or if file already exists
-            if not calls and not os.path.exists(CALLS_FILE):
-                print("⚠️ Skipped saving (no calls yet).")
-                return
-
             tmp_file = f"{CALLS_FILE}.tmp"
             with open(tmp_file, "w") as f:
                 json.dump(calls, f, indent=2)
-            os.replace(tmp_file, CALLS_FILE)  # atomic write
-
-            with open(SETTINGS_FILE, "w") as f:
-                json.dump(settings, f, indent=2)
-
-        print(f"💾 Saved {len(calls)} calls.")
+            os.replace(tmp_file, CALLS_FILE)
+            print(f"💾 Saved {len(calls)} call(s).")
     except Exception as e:
         print(f"⚠️ Error saving data: {e}")
+
 
 
 # --- Routes ---
@@ -92,21 +72,11 @@ def home():
     return "✅ Lexi Call Agent Server running!"
 
 
-@app.route("/calls")
+@app.route("/calls", methods=["GET"])
 def get_calls():
-    """Always reload from disk before returning."""
-    global calls
-    try:
-        if os.path.exists(CALLS_FILE):
-            with lock:
-                with open(CALLS_FILE, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        calls = data
-        return jsonify(calls)
-    except Exception as e:
-        print(f"⚠️ Error loading calls: {e}")
-        return jsonify(calls)
+    """Always load from disk before returning."""
+    load_data()
+    return jsonify(calls)
 
 
 @app.route("/calls", methods=["DELETE"])
@@ -173,40 +143,25 @@ def set_time_range():
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
     data = request.get_json(force=True)
-    msg = data.get("message", {})
+    print(f"Incoming data: {data}")
 
-    # Only process end-of-call events
-    if msg.get("type") != "end-of-call-report":
-        return jsonify({"ignored": msg.get("type")}), 200
+    name = data.get("name", "Unknown")
+    phone = data.get("phone_number", "Unknown")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Check if bot is active and within hours
-    if not settings["bot_active"] or not within_active_hours():
-        print("⏸ Ignored call (bot inactive or outside time range).")
-        return jsonify({"ok": False, "reason": "inactive"}), 200
+    new_call = {
+        "name": name,
+        "phone": phone,
+        "timestamp": timestamp,
+        "selected": False
+    }
 
-    # Extract caller info
-    summary = msg.get("analysis", {}).get("summary", "")
-    name, phone = "Unknown", "Unknown"
+    load_data()  # 🔥 ensures we have the latest list before appending
+    calls.append(new_call)
+    save_data()
 
-    names = re.findall(r"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", summary)
-    if names:
-        name = names[0]
+    return jsonify({"status": "ok", "added": new_call})
 
-    digits = re.sub(r"\D", "", summary)
-    if len(digits) >= 7:
-        phone = digits[-10:]
-
-    # Save call
-    with lock:
-        calls.append({
-            "name": name,
-            "phone": phone,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        })
-    save_data_async()
-
-    print(f"✅ Saved call: {name}, {phone}")
-    return jsonify({"ok": True})
 
 
 # --- Run Server ---
@@ -214,6 +169,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
