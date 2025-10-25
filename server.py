@@ -81,18 +81,35 @@ def get_calls():
     return jsonify(calls)
 
 
-@app.route("/delete", methods=["POST"])
+@app.route("/calls", methods=["DELETE"])
 def delete_calls():
-    to_delete = request.get_json(force=True)
-    global calls
-    with lock:
-        calls = [
-            c for c in calls
-            if not (c["name"] == to_delete["name"] and c["phone"] == to_delete["phone"])
-        ]
-    save_data_async()
-    return jsonify({"ok": True})
+    try:
+        data = request.get_json(force=True)
+        to_delete = data.get("calls", [])
+        if not to_delete:
+            return jsonify({"error": "No calls provided"}), 400
 
+        global calls_data
+        before_count = len(calls_data)
+
+        # Remove entries that exactly match all three fields
+        def match(c, d):
+            return (
+                c.get("name") == d.get("name")
+                and c.get("phone") == d.get("phone")
+                and c.get("timestamp") == d.get("timestamp")
+            )
+
+        calls_data = [
+            c for c in calls_data
+            if not any(match(c, d) for d in to_delete)
+        ]
+
+        deleted_count = before_count - len(calls_data)
+        return jsonify({"deleted": deleted_count}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/status")
 def status():
@@ -165,6 +182,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
