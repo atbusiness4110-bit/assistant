@@ -89,23 +89,43 @@ def get_calls():
 
 @app.route("/calls", methods=["DELETE"])
 def delete_calls():
+    print("🧨 DELETE endpoint hit!")  # Verify endpoint call
     try:
         data = request.get_json(force=True)
         to_delete = data.get("calls", [])
+        print("🗂 Data received for deletion:", json.dumps(to_delete, indent=2))
+
         if not to_delete:
             return jsonify({"error": "No calls provided"}), 400
 
         load_data()
-        before_count = len(calls)
+        print(f"📂 Loaded {len(calls)} calls before deletion.")
+
+        def normalize(s):
+            if not s:
+                return ""
+            return str(s).strip().lower().replace(" ", "").replace("-", "").replace(":", "").replace("t", " ").replace("z", "")
 
         def match(c, d):
-            def normalize(t):
-                return str(t).split()[0:2]  # ignore seconds or AM/PM
             return (
-                c.get("name") == d.get("name")
-                and c.get("phone") == d.get("phone")
-                and " ".join(normalize(c.get("timestamp", ""))) == " ".join(normalize(d.get("timestamp", "")))
+                normalize(c.get("name")) == normalize(d.get("name")) and
+                normalize(c.get("phone")) == normalize(d.get("phone")) and
+                normalize(c.get("timestamp")[:16]) == normalize(d.get("timestamp")[:16])
             )
+
+        before = len(calls)
+        with lock:
+            calls[:] = [c for c in calls if not any(match(c, d) for d in to_delete)]
+            save_data()
+
+        after = len(calls)
+        deleted_count = before - after
+        print(f"✅ Deleted {deleted_count} call(s). Remaining: {after}")
+        return jsonify({"deleted": deleted_count}), 200
+
+    except Exception as e:
+        print(f"⚠️ Delete error: {e}")
+        return jsonify({"error": str(e)}), 500
 
         remaining = [
             c for c in calls if not any(match(c, d) for d in to_delete)
@@ -199,6 +219,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
