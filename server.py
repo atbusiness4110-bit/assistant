@@ -37,37 +37,53 @@ def within_active_hours():
 
 
 def load_data():
-    """Load existing call and settings data."""
+    """Load calls and settings safely from disk."""
     global calls, settings
     try:
         with lock:
             if os.path.exists(CALLS_FILE):
                 with open(CALLS_FILE, "r") as f:
-                    calls[:] = json.load(f)
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        calls[:] = data
+                    else:
+                        print("⚠️ CALLS_FILE data invalid, resetting.")
+                        calls[:] = []
+            else:
+                calls[:] = []
+
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r") as f:
-                    settings.update(json.load(f))
-        print("📂 Data loaded successfully.")
+                    s = json.load(f)
+                    if isinstance(s, dict):
+                        settings.update(s)
+
+        print(f"📂 Loaded {len(calls)} call(s).")
     except Exception as e:
         print(f"⚠️ Error loading data: {e}")
+        calls[:] = []
 
 
 def save_data():
-    """Save all data to disk."""
+    """Always save to disk safely — never overwrite with empty."""
     try:
         with lock:
-            with open(CALLS_FILE, "w") as f:
+            # Only save if calls exist or if file already exists
+            if not calls and not os.path.exists(CALLS_FILE):
+                print("⚠️ Skipped saving (no calls yet).")
+                return
+
+            tmp_file = f"{CALLS_FILE}.tmp"
+            with open(tmp_file, "w") as f:
                 json.dump(calls, f, indent=2)
+            os.replace(tmp_file, CALLS_FILE)  # atomic write
+
             with open(SETTINGS_FILE, "w") as f:
                 json.dump(settings, f, indent=2)
-        print("💾 Data saved successfully.")
+
+        print(f"💾 Saved {len(calls)} calls.")
     except Exception as e:
         print(f"⚠️ Error saving data: {e}")
-
-
-def save_data_async():
-    """Save data in background thread to avoid Render timeouts."""
-    threading.Thread(target=save_data, daemon=True).start()
 
 
 # --- Routes ---
@@ -186,6 +202,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
