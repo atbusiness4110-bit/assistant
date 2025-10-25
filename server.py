@@ -2,17 +2,17 @@ import os, json, re, threading, logging, sys
 from datetime import datetime
 from flask import Flask, request, jsonify
 
-# Logging setup
+# --- Logging setup ---
 logging.basicConfig(stream=sys.stdout, level=logging.INFO, force=True)
 print = lambda *a, **kw: logging.info(" ".join(map(str, a)))
 
-# Flask setup
+# --- Flask setup ---
 app = Flask(__name__)
 
 CALLS_FILE = "calls.json"
 SETTINGS_FILE = "settings.json"
 
-# Data stores
+# --- Data stores ---
 calls = []
 settings = {
     "bot_active": True,
@@ -20,19 +20,24 @@ settings = {
     "active_end": "23:59",
 }
 
-def within_active_hours():
-    """
-    Returns True if the current time is within active hours (e.g., 9am–5pm).
-    You can change the hours as needed.
-    """
-    now = datetime.now().time()
-    start = datetime.strptime("09:00", "%H:%M").time()
-    end = datetime.strptime("17:00", "%H:%M").time()
-    return start <= now <= end
-    
 lock = threading.Lock()
 
+
+# --- Helpers ---
+def within_active_hours():
+    """Check if current time is within the active time range."""
+    try:
+        now = datetime.now().time()
+        start = datetime.strptime(settings["active_start"], "%H:%M").time()
+        end = datetime.strptime(settings["active_end"], "%H:%M").time()
+        return start <= now <= end
+    except Exception as e:
+        print(f"⚠️ Error in within_active_hours: {e}")
+        return True  # fail-safe: always true
+
+
 def load_data():
+    """Load existing call and settings data."""
     global calls, settings
     try:
         with lock:
@@ -42,27 +47,39 @@ def load_data():
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r") as f:
                     settings.update(json.load(f))
+        print("📂 Data loaded successfully.")
     except Exception as e:
-        print("⚠️ Error loading data:", e)
+        print(f"⚠️ Error loading data: {e}")
+
 
 def save_data():
+    """Save all data to disk."""
     try:
         with lock:
             with open(CALLS_FILE, "w") as f:
                 json.dump(calls, f, indent=2)
             with open(SETTINGS_FILE, "w") as f:
                 json.dump(settings, f, indent=2)
+        print("💾 Data saved successfully.")
     except Exception as e:
-        print("⚠️ Error saving data:", e)
+        print(f"⚠️ Error saving data: {e}")
+
+
+def save_data_async():
+    """Save data in background thread to avoid Render timeouts."""
+    threading.Thread(target=save_data, daemon=True).start()
+
 
 # --- Routes ---
 @app.route("/")
 def home():
     return "✅ Lexi Call Agent Server running!"
 
+
 @app.route("/calls")
 def get_calls():
     return jsonify(calls)
+
 
 @app.route("/delete", methods=["POST"])
 def delete_calls():
@@ -73,8 +90,9 @@ def delete_calls():
             c for c in calls
             if not (c["name"] == to_delete["name"] and c["phone"] == to_delete["phone"])
         ]
-    save_data()
+    save_data_async()
     return jsonify({"ok": True})
+
 
 @app.route("/status")
 def status():
@@ -86,19 +104,22 @@ def status():
         "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
 
+
 @app.route("/toggle", methods=["POST"])
 def toggle_bot():
     settings["bot_active"] = not settings["bot_active"]
-    save_data()
+    save_data_async()
     return jsonify({"bot_active": settings["bot_active"]})
+
 
 @app.route("/set-time-range", methods=["POST"])
 def set_time_range():
     data = request.get_json(force=True)
     settings["active_start"] = data.get("start", "00:00")
     settings["active_end"] = data.get("end", "23:59")
-    save_data()
+    save_data_async()
     return jsonify({"ok": True, "settings": settings})
+
 
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
@@ -109,7 +130,7 @@ def vapi_callback():
     if msg.get("type") != "end-of-call-report":
         return jsonify({"ignored": msg.get("type")}), 200
 
-    # Check if bot is active
+    # Check if bot is active and within hours
     if not settings["bot_active"] or not within_active_hours():
         print("⏸ Ignored call (bot inactive or outside time range).")
         return jsonify({"ok": False, "reason": "inactive"}), 200
@@ -133,16 +154,19 @@ def vapi_callback():
             "phone": phone,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
-        save_data()
+    save_data_async()
 
     print(f"✅ Saved call: {name}, {phone}")
     return jsonify({"ok": True})
+
 
 # --- Run Server ---
 if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
+
 
 
 
