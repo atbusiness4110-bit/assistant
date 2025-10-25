@@ -20,12 +20,9 @@ settings = {
     "active_end": "23:59",
 }
 
-# Thread-safe lock for I/O
 lock = threading.Lock()
 
-# --- Helpers ---
 def load_data():
-    """Load data from JSON files safely."""
     global calls, settings
     try:
         with lock:
@@ -39,24 +36,14 @@ def load_data():
         print("⚠️ Error loading data:", e)
 
 def save_data():
-    """Safely save data to disk."""
     try:
         with lock:
-            tmp_calls = list(calls)
-            tmp_settings = dict(settings)
             with open(CALLS_FILE, "w") as f:
-                json.dump(tmp_calls, f, indent=2)
+                json.dump(calls, f, indent=2)
             with open(SETTINGS_FILE, "w") as f:
-                json.dump(tmp_settings, f, indent=2)
+                json.dump(settings, f, indent=2)
     except Exception as e:
         print("⚠️ Error saving data:", e)
-
-def within_active_hours():
-    """Check if current time is within the active range."""
-    now = datetime.now().time()
-    start = datetime.strptime(settings["active_start"], "%H:%M").time()
-    end = datetime.strptime(settings["active_end"], "%H:%M").time()
-    return start <= now <= end
 
 # --- Routes ---
 @app.route("/")
@@ -146,7 +133,6 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
-
 
 
 
