@@ -89,8 +89,8 @@ def delete_calls():
         if not to_delete:
             return jsonify({"error": "No calls provided"}), 400
 
-        global calls_data
-        before_count = len(calls_data)
+        global calls
+        before_count = len(calls)
 
         # Remove entries that exactly match all three fields
         def match(c, d):
@@ -100,15 +100,19 @@ def delete_calls():
                 and c.get("timestamp") == d.get("timestamp")
             )
 
-        calls_data = [
-            c for c in calls_data
-            if not any(match(c, d) for d in to_delete)
-        ]
+        with lock:
+            calls[:] = [
+                c for c in calls
+                if not any(match(c, d) for d in to_delete)
+            ]
+            save_data_async()  # Save changes to disk in background
 
-        deleted_count = before_count - len(calls_data)
+        deleted_count = before_count - len(calls)
+        print(f"🗑️ Deleted {deleted_count} call(s).")
         return jsonify({"deleted": deleted_count}), 200
 
     except Exception as e:
+        print(f"⚠️ Error in delete_calls: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/status")
@@ -182,6 +186,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
