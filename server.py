@@ -1,77 +1,64 @@
-from flask import Flask, request, jsonify
-from datetime import datetime
-import re
-import json
-import traceback
-
-app = Flask(__name__)
-calls = {}
-
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
     print("\n🔥 VAPI CALLBACK RECEIVED 🔥")
 
     try:
-        # Parse JSON safely (handles plain string bodies too)
         try:
             data = request.get_json(force=True)
         except Exception:
             data = json.loads(request.data.decode("utf-8"))
-
-        # Handle if data itself is a stringified JSON
         if isinstance(data, str):
             data = json.loads(data)
 
         print("\n📩 RAW VAPI DATA (truncated):\n", json.dumps(data, indent=2)[:1000])
 
-        call_id = str(data.get("call_id", data.get("id", "unknown")))
-        status = str(data.get("status", data.get("call_status", ""))).lower()
+        # extract message wrapper
+        message = data.get("message", {})
+        msg_type = message.get("type", "").lower()
 
-        # ✅ Detect messages in any shape
-        messages = []
-        if "messages" in data:
-            messages = data["messages"]
-        elif "messagesOpenAIFormatted" in data:
-            messages = data["messagesOpenAIFormatted"]
-        elif isinstance(data, list):
-            messages = data
-        elif "message" in data:
-            messages = [data]
+        # we'll use timestamp as unique ID if Vapi doesn't send call_id
+        call_id = str(message.get("timestamp", datetime.now().timestamp()))
 
         name = None
         phone = None
 
-        # Loop through every message we can find
-        for msg in messages:
-            # Each message may be dict or string
-            text = ""
-            if isinstance(msg, dict):
-                text = msg.get("message") or msg.get("content") or ""
-            elif isinstance(msg, str):
-                text = msg
-            text = str(text).strip()
+        # 1️⃣ check analysis summary first (most accurate)
+        analysis = message.get("analysis", {})
+        if "summary" in analysis:
+            summary = analysis["summary"]
 
-            if not text:
-                continue
+            # extract name and phone from text summary
+            possible_names = re.findall(r"\b[A-Z][a-z]+\b", summary)
+            filtered = [n for n in possible_names if n.lower() not in
+                        ["hi", "hello", "thanks", "good", "morning", "evening",
+                         "afternoon", "bye", "test", "you", "please", "attorney",
+                         "law", "firm", "called", "recent", "contract", "agreement"]]
+            if filtered:
+                name = " ".join(filtered[:2])
 
-            # Find capitalized names (skip generic words)
-            possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
-            if possible_names:
-                filtered = [
-                    n for n in possible_names
-                    if n.lower() not in ["hi", "hello", "thanks", "good", "morning", "evening",
-                                         "afternoon", "bye", "test", "you", "please", "attorney"]
-                ]
-                if filtered and not name:
-                    name = " ".join(filtered[:2])
-
-            # Find any 7+ digit number for phone
-            digits = re.sub(r"\D", "", text)
+            digits = re.sub(r"\D", "", summary)
             if len(digits) >= 7:
                 phone = digits
 
-        # ✅ Save only when the call ends
-        if status == "ended" and call_id not in calls:
+        # 2️⃣ fallback: look in artifact.messages if summary is missing
+        if not name or not phone:
+            artifact = message.get("artifact", {})
+            msgs = artifact.get("messages", [])
+            for msg in msgs:
+                text = str(msg.get("message", "")) or str(msg.get("content", ""))
+                if not text:
+                    continue
+                digits = re.sub(r"\D", "", text)
+                if len(digits) >= 7:
+                    phone = digits
+                poss = re.findall(r"\b[A-Z][a-z]+\b", text)
+                if poss:
+                    filt = [p for p in poss if p.lower() not in ["hi", "hello", "good", "bye", "thanks", "please"]]
+                    if filt:
+                        name = " ".join(filt[:2])
+
+        # 3️⃣ save only if this is an end-of-call report
+        if msg_type == "end-of-call-report":
             entry = {
                 "call_id": call_id,
                 "name": name or "Unknown",
@@ -81,7 +68,7 @@ def vapi_callback():
             calls[call_id] = entry
             print(f"✅ SAVED CALL: {entry}")
         else:
-            print(f"ℹ️ Update ignored (status={status}, call_id={call_id})")
+            print(f"ℹ️ Skipped (type={msg_type})")
 
         return jsonify({"ok": True}), 200
 
@@ -89,19 +76,6 @@ def vapi_callback():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-
-@app.route("/calls", methods=["GET"])
-def get_calls():
-    return jsonify(list(calls.values())), 200
-
-
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"message": "✅ Lexi webhook running fine!"}), 200
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
 
 
 
