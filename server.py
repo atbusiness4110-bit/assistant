@@ -5,52 +5,50 @@ import traceback
 import json
 
 app = Flask(__name__)
-calls = {}  # Stores one entry per call_id
-
+calls = {}
 
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
-    """Receives call data from Vapi and extracts name + phone number."""
     try:
-        data = request.get_json(force=True, silent=True)
+        # Get data safely (works even if Vapi sends weird content)
+        try:
+            data = request.get_json(force=True)
+        except:
+            data = json.loads(request.data.decode("utf-8"))
 
-        # Log everything coming from Vapi
-        print("📨 RAW DATA RECEIVED FROM VAPI:\n", json.dumps(data, indent=2))
+        print("\n📩 RAW VAPI DATA:\n", json.dumps(data, indent=2))
 
-        if not data:
-            print("⚠️ No JSON received from Vapi!")
-            return jsonify({"error": "No data received"}), 400
-
-        # --- Extract core info ---
-        call_id = str(data.get("call_id") or data.get("id") or "unknown")
-        messages = data.get("messages", [])
+        call_id = str(data.get("call_id", "unknown"))
         status = str(data.get("status", "")).lower()
+        messages = data.get("messages", [])
+
+        # fallback — sometimes Vapi sends message as string not list
+        if isinstance(messages, str):
+            messages = [{"message": messages}]
 
         name = None
         phone = None
 
-        # --- Analyze all message text ---
+        # Loop through messages and find name + phone
         for msg in messages:
-            text = str(msg.get("message") or msg.get("text") or "").strip()
+            text = str(msg.get("message", "")).strip()
             if not text:
                 continue
 
-            # Detect possible names (any capitalized words, ignore greetings)
+            # Try to detect name (capitalized words)
             possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
             if possible_names:
-                filtered = [
-                    n for n in possible_names
-                    if n.lower() not in ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon", "bye"]
-                ]
+                filtered = [n for n in possible_names if n.lower() not in
+                            ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon", "bye", "test"]]
                 if filtered:
                     name = " ".join(filtered[:2])
 
-            # Detect possible phone numbers (digits only)
+            # Detect phone number
             digits = re.sub(r"\D", "", text)
             if len(digits) >= 7:
                 phone = digits
 
-        # --- Save once when call ends ---
+        # Save only one entry per call_id (when ended)
         if status == "ended" and call_id not in calls:
             entry = {
                 "call_id": call_id,
@@ -59,31 +57,26 @@ def vapi_callback():
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             calls[call_id] = entry
-            print(f"✅ SAVED FINAL CALL: {entry}")
+            print(f"✅ SAVED CALL: {entry}")
         else:
-            print(f"ℹ️ Ignored interim update (status={status})")
+            print(f"ℹ️ Update ignored (status={status})")
 
-        return jsonify({"ok": True}), 200
+        return jsonify({"ok": True})
 
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/calls", methods=["GET"])
 def get_calls():
-    """View all recorded calls."""
     return jsonify(list(calls.values())), 200
-
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "✅ Law Firm API is running and waiting for Vapi data."}), 200
-
+    return jsonify({"message": "✅ Lexi webhook running fine!"}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
-
 
 
 
