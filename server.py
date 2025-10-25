@@ -3,105 +3,64 @@ from datetime import datetime
 import re
 import traceback
 import json
-import os
 
 app = Flask(__name__)
 
-CALLS_FILE = "calls.json"
-
-# Create calls.json if missing
-if not os.path.exists(CALLS_FILE):
-    with open(CALLS_FILE, "w") as f:
-        json.dump([], f)
-
-
-def extract_name_and_number(text):
-    """Detects names and phone numbers from any text."""
-    name = None
-    phone = None
-
-    # Normalize
-    text = text.strip()
-
-    # --- Phone number detection ---
-    digits = re.sub(r"\D", "", text)
-    if len(digits) >= 7 and len(digits) <= 15:
-        phone = digits
-
-    # --- Name detection ---
-    # Look for "I'm John", "This is Sarah Lee", etc.
-    patterns = [
-        r"(?:i am|i'm|this is|my name is|call me|name's)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
-        r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b"
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            candidate = match.group(1).strip()
-            # Filter out generic words that aren't names
-            if candidate.lower() not in ["hi", "hello", "thanks", "yes", "no", "okay", "good", "morning", "afternoon", "evening"]:
-                name = candidate
-                break
-
-    return name, phone
+calls = {}  # Use dict so each call_id is recorded once
 
 
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
     try:
-        data = request.json
-        print("📨 Incoming call data received")
+        # Read and log everything from Vapi
+        data = request.get_json(force=True, silent=True)
+        print("📨 RAW CALLBACK DATA:\n", json.dumps(data, indent=2))
 
-        # Handle both formats (plain JSON or nested under 'message')
-        message_data = data.get("message", {})
-        call_info = message_data.get("call", {})
-        messages = message_data.get("conversation", [])
+        if not data:
+            print("⚠️ No JSON data received from Vapi.")
+            return jsonify({"error": "No data"}), 400
 
-        # Some services send directly a messages list
-        if not messages and "messages" in data:
-            messages = data["messages"]
-
-        call_id = call_info.get("id", data.get("call_id", "unknown"))
-        status = (call_info.get("status") or data.get("status", "")).lower()
+        call_id = str(data.get("call_id", "unknown"))
+        messages = data.get("messages", [])
+        status = data.get("status", "").lower()
 
         name = None
         phone = None
 
-        # Go through all messages in the conversation
+        # Analyze all messages (Vapi sends a full conversation log)
         for msg in messages:
-            text = msg.get("message", "").strip()
+            text = str(msg.get("message", "")).strip()
             if not text:
                 continue
 
-            found_name, found_phone = extract_name_and_number(text)
+            # 🔍 Detect any capitalized word as a name (ignore greetings)
+            possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
+            if possible_names:
+                filtered = [
+                    n for n in possible_names
+                    if n.lower() not in ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon", "bye"]
+                ]
+                if filtered:
+                    name = " ".join(filtered[:2])
 
-            if found_name and not name:
-                name = found_name
-            if found_phone and not phone:
-                phone = found_phone
+            # 🔢 Detect phone number anywhere in message
+            digits = re.sub(r"\D", "", text)
+            if len(digits) >= 7:
+                phone = digits
 
-        # ✅ Only save when we have both
-        if name and phone:
+        # Only save when call ends
+        if status == "ended" and call_id not in calls:
             entry = {
-                "name": name,
-                "phone": phone,
+                "call_id": call_id,
+                "name": name or "Unknown",
+                "phone": phone or "Unknown",
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
+            calls[call_id] = entry
+            print(f"✅ SAVED CALL — {entry}")
 
-            with open(CALLS_FILE, "r") as f:
-                calls = json.load(f)
-
-            # Avoid duplicates (same number or same name)
-            if not any(c["phone"] == phone or c["name"].lower() == name.lower() for c in calls):
-                calls.append(entry)
-                with open(CALLS_FILE, "w") as f:
-                    json.dump(calls, f, indent=2)
-                print(f"✅ SAVED CALL — Name: {name}, Phone: {phone}, Time: {entry['timestamp']}")
-            else:
-                print(f"⚠️ Duplicate detected for {name} ({phone}), skipping save.")
         else:
-            print("⚙️ No complete name + number detected yet...")
+            print(f"ℹ️ Ignored call update (status={status})")
 
         return jsonify({"ok": True})
 
@@ -112,23 +71,17 @@ def vapi_callback():
 
 @app.route("/calls", methods=["GET"])
 def get_calls():
-    try:
-        with open(CALLS_FILE, "r") as f:
-            calls = json.load(f)
-        return jsonify(calls)
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+    """View all recorded calls"""
+    return jsonify(list(calls.values())), 200
 
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "✅ Law Firm Caller API is live and detecting names + numbers!"})
+    return jsonify({"message": "✅ Law Firm API is running!"}), 200
 
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
-
 
 
 
