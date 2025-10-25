@@ -56,22 +56,9 @@ def load_data():
 
 
 def save_data():
-    """Atomically save data to disk."""
-    try:
-        with lock:
-            tmp_file = f"{CALLS_FILE}.tmp"
-            with open(tmp_file, "w") as f:
-                json.dump(calls, f, indent=2)
-            os.replace(tmp_file, CALLS_FILE)
-
-            tmp_file2 = f"{SETTINGS_FILE}.tmp"
-            with open(tmp_file2, "w") as f:
-                json.dump(settings, f, indent=2)
-            os.replace(tmp_file2, SETTINGS_FILE)
-
-            print(f"💾 Saved {len(calls)} call(s).")
-    except Exception as e:
-        print(f"⚠️ Error saving data: {e}")
+    """Save the current call list to file."""
+    with open(CALLS_FILE, "w") as f:
+        json.dump(calls, f, indent=2)
 
 
 # --- Routes ---
@@ -89,7 +76,7 @@ def get_calls():
 
 @app.route("/calls", methods=["DELETE"])
 def delete_calls():
-    print("🧨 DELETE endpoint hit!")  # Verify endpoint call
+    print("🧨 DELETE endpoint hit!")
     try:
         data = request.get_json(force=True)
         to_delete = data.get("calls", [])
@@ -127,19 +114,6 @@ def delete_calls():
         print(f"⚠️ Delete error: {e}")
         return jsonify({"error": str(e)}), 500
 
-        remaining = [
-            c for c in calls if not any(match(c, d) for d in to_delete)
-        ]
-
-        with lock:
-            calls[:] = remaining
-        save_data()
-
-        deleted_count = before_count - len(calls)
-        return jsonify({"deleted": deleted_count}), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 
@@ -219,6 +193,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
