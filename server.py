@@ -21,29 +21,28 @@ settings = {
     "active_end": "23:59",
 }
 
-# --- Helpers ---
 def load_data():
     global calls, settings
-    if os.path.exists(CALLS_FILE):
-        try:
-            with open(CALLS_FILE, "r") as f:
-                calls[:] = json.load(f)
-        except Exception:
-            calls.clear()
-
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, "r") as f:
-                settings.update(json.load(f))
-        except Exception:
-            pass
+    try:
+        with lock:
+            if os.path.exists(CALLS_FILE):
+                with open(CALLS_FILE, "r") as f:
+                    calls[:] = json.load(f)
+            if os.path.exists(SETTINGS_FILE):
+                with open(SETTINGS_FILE, "r") as f:
+                    settings.update(json.load(f))
+    except Exception as e:
+        print("⚠️ Error loading data:", e)
 
 def save_data():
-    with lock:
-        with open(CALLS_FILE, "w") as f:
-            json.dump(calls, f, indent=2)
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(settings, f, indent=2)
+    try:
+        with lock:
+            with open(CALLS_FILE, "w") as f:
+                json.dump(calls, f, indent=2)
+            with open(SETTINGS_FILE, "w") as f:
+                json.dump(settings, f, indent=2)
+    except Exception as e:
+        print("⚠️ Error saving data:", e)
 
 def within_active_hours():
     now = datetime.now()
@@ -153,6 +152,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
