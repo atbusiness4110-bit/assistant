@@ -20,6 +20,16 @@ settings = {
     "active_end": "23:59",
 }
 
+def within_active_hours():
+    """
+    Returns True if the current time is within active hours (e.g., 9am–5pm).
+    You can change the hours as needed.
+    """
+    now = datetime.now().time()
+    start = datetime.strptime("09:00", "%H:%M").time()
+    end = datetime.strptime("17:00", "%H:%M").time()
+    return start <= now <= end
+    
 lock = threading.Lock()
 
 def load_data():
@@ -133,6 +143,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
