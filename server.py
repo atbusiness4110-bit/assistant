@@ -94,7 +94,19 @@ def home():
 
 @app.route("/calls")
 def get_calls():
-    return jsonify(calls)
+    """Always reload from disk before returning."""
+    global calls
+    try:
+        if os.path.exists(CALLS_FILE):
+            with lock:
+                with open(CALLS_FILE, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        calls = data
+        return jsonify(calls)
+    except Exception as e:
+        print(f"⚠️ Error loading calls: {e}")
+        return jsonify(calls)
 
 
 @app.route("/calls", methods=["DELETE"])
@@ -202,6 +214,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
