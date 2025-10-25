@@ -76,42 +76,33 @@ def get_calls():
 
 @app.route("/calls", methods=["DELETE"])
 def delete_calls():
-    print("🧨 DELETE endpoint hit!")
     try:
         data = request.get_json(force=True)
         to_delete = data.get("calls", [])
-        print("🗂 Data received for deletion:", json.dumps(to_delete, indent=2))
-
         if not to_delete:
             return jsonify({"error": "No calls provided"}), 400
 
         load_data()
-        print(f"📂 Loaded {len(calls)} calls before deletion.")
-
-        def normalize(s):
-            if not s:
-                return ""
-            return str(s).strip().lower().replace(" ", "").replace("-", "").replace(":", "").replace("t", " ").replace("z", "")
+        before_count = len(calls)
 
         def match(c, d):
             return (
-                normalize(c.get("name")) == normalize(d.get("name")) and
-                normalize(c.get("phone")) == normalize(d.get("phone")) and
-                normalize(c.get("timestamp")[:16]) == normalize(d.get("timestamp")[:16])
+                c.get("name") == d.get("name")
+                and c.get("phone") == d.get("phone")
             )
 
-        before = len(calls)
-        with lock:
-            calls[:] = [c for c in calls if not any(match(c, d) for d in to_delete)]
-            save_data()
+        remaining = [
+            c for c in calls if not any(match(c, d) for d in to_delete)
+        ]
 
-        after = len(calls)
-        deleted_count = before - after
-        print(f"✅ Deleted {deleted_count} call(s). Remaining: {after}")
+        with lock:
+            calls[:] = remaining
+        save_data()
+
+        deleted_count = before_count - len(calls)
         return jsonify({"deleted": deleted_count}), 200
 
     except Exception as e:
-        print(f"⚠️ Delete error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -193,6 +184,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
