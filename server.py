@@ -1,75 +1,96 @@
 from flask import Flask, request, jsonify
-import json
 from datetime import datetime
+import re
+import traceback
+import json
 import os
 
 app = Flask(__name__)
 
 CALLS_FILE = "calls.json"
 
-# Ensure calls.json exists
+# Ensure file exists
 if not os.path.exists(CALLS_FILE):
     with open(CALLS_FILE, "w") as f:
         json.dump([], f)
 
-@app.route("/")
-def home():
-    return "Caller Bot Webhook Active", 200
-
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
+    data = request.json
     try:
-        data = request.get_json()
-        print("📨 Incoming JSON:", json.dumps(data, indent=2))
+        print("📨 Incoming JSON received")
+        # Sometimes the Vapi webhook wraps data inside 'message'
+        message_data = data.get("message", {})
+        call_info = message_data.get("call", {})
 
-        # Extract key info safely
-        call_id = data.get("message", {}).get("call", {}).get("id", "unknown")
-        conversation = data.get("message", {}).get("conversation", [])
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        call_id = call_info.get("id", "unknown")
+        messages = message_data.get("conversation", [])
+        status = call_info.get("status", "").lower()
 
-        # Initialize default
-        caller_name = "Unknown"
-        caller_phone = "Unknown"
-        status = "unknown"
+        name = None
+        phone = None
 
-        # Try to extract from conversation messages
-        for msg in conversation:
-            if msg.get("role") == "user":
-                user_text = msg.get("message", "")
-                # Basic heuristics to detect name / phone
-                if any(x in user_text.lower() for x in ["name", "i am", "this is", "my name"]):
-                    caller_name = user_text
-                elif any(c.isdigit() for c in user_text) and len(user_text) >= 7:
-                    caller_phone = user_text
-            elif msg.get("role") == "bot" and "thank you" in msg.get("message", "").lower():
-                status = "complete"
+        # Parse through messages
+        for msg in messages:
+            text = msg.get("message", "").strip()
+            lower = text.lower()
 
-        # Build new record
-        new_call = {
-            "call_id": call_id,
-            "name": caller_name,
-            "phone": caller_phone,
-            "status": status,
-            "timestamp": timestamp
-        }
+            # Detect possible names
+            if any(keyword in lower for keyword in ["name", "i am", "i'm", "this is", "call me", "myself"]):
+                possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
+                filtered = [n for n in possible_names if n.lower() not in ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon"]]
+                if filtered:
+                    name = " ".join(filtered[:2])
+                    print(f"[🧠 Detected name: {name}]")
 
-        # Load existing calls
-        with open(CALLS_FILE, "r") as f:
-            calls = json.load(f)
+            # Detect possible phone numbers
+            digits = re.sub(r"\D", "", text)
+            if len(digits) >= 7:
+                phone = digits
+                print(f"[📞 Detected phone: {phone}]")
 
-        calls.append(new_call)
+        # Record only at the end of the call
+        if status in ["ended", "completed", "done", "queued"] or len(messages) > 5:
+            entry = {
+                "call_id": call_id,
+                "name": name or "Unknown",
+                "phone": phone or "Unknown",
+                "status": status or "completed",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
 
-        # Save updated calls
-        with open(CALLS_FILE, "w") as f:
-            json.dump(calls, f, indent=2)
+            # Load, append, save
+            with open(CALLS_FILE, "r") as f:
+                calls = json.load(f)
+            calls.append(entry)
+            with open(CALLS_FILE, "w") as f:
+                json.dump(calls, f, indent=2)
 
-        print("✅ Saved call info:", new_call)
-        return jsonify({"success": True, "saved": new_call}), 200
+            print(f"✅ SAVED CALL — {entry}")
+        else:
+            print("🕓 Call still in progress — not saved yet")
+
+        return jsonify({"ok": True})
 
     except Exception as e:
-        print("❌ Error handling callback:", e)
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/calls", methods=["GET"])
+def get_calls():
+    with open(CALLS_FILE, "r") as f:
+        calls = json.load(f)
+    return jsonify(calls)
+
+
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "✅ Law Firm API is running!"})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
+
 
