@@ -1,78 +1,75 @@
 from flask import Flask, request, jsonify
+import json
 from datetime import datetime
-import re
-import traceback
+import os
 
 app = Flask(__name__)
-calls = []  # temporary storage (replace with DB later)
+
+CALLS_FILE = "calls.json"
+
+# Ensure calls.json exists
+if not os.path.exists(CALLS_FILE):
+    with open(CALLS_FILE, "w") as f:
+        json.dump([], f)
+
+@app.route("/")
+def home():
+    return "Caller Bot Webhook Active", 200
 
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
     try:
-        data = request.json
-        print("\n📨 Incoming JSON:", data)  # 🧠 log entire payload
+        data = request.get_json()
+        print("📨 Incoming JSON:", json.dumps(data, indent=2))
 
-        if not data:
-            return jsonify({"error": "No data received"}), 400
+        # Extract key info safely
+        call_id = data.get("message", {}).get("call", {}).get("id", "unknown")
+        conversation = data.get("message", {}).get("conversation", [])
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        call_id = data.get("call_id", "unknown")
-        messages = data.get("messages", [])
-        name = None
-        phone = None
+        # Initialize default
+        caller_name = "Unknown"
+        caller_phone = "Unknown"
+        status = "unknown"
 
-        # 🧩 Analyze all messages to detect name & phone
-        for msg in messages:
-            text = msg.get("message", "").strip()
-            lower = text.lower()
-            print(f"🗣 Message fragment: {text}")
+        # Try to extract from conversation messages
+        for msg in conversation:
+            if msg.get("role") == "user":
+                user_text = msg.get("message", "")
+                # Basic heuristics to detect name / phone
+                if any(x in user_text.lower() for x in ["name", "i am", "this is", "my name"]):
+                    caller_name = user_text
+                elif any(c.isdigit() for c in user_text) and len(user_text) >= 7:
+                    caller_phone = user_text
+            elif msg.get("role") == "bot" and "thank you" in msg.get("message", "").lower():
+                status = "complete"
 
-            # --- Detect possible name ---
-            if any(keyword in lower for keyword in ["name", "i am", "i'm", "this is", "call me", "myself"]):
-                possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
-                if possible_names:
-                    filtered = [n for n in possible_names if n.lower() not in 
-                                ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon"]]
-                    if filtered:
-                        name = " ".join(filtered[:2])
-                        print(f"🧠 Detected name: {name}")
-
-            # --- Detect phone numbers ---
-            digits = re.sub(r"\D", "", text)
-            if len(digits) >= 7:
-                phone = digits
-                print(f"📞 Detected phone: {phone}")
-
-        # 🧠 If nothing detected, mark as unknown
-        entry = {
+        # Build new record
+        new_call = {
             "call_id": call_id,
-            "name": name or "Unknown",
-            "phone": phone or "Unknown",
-            "status": data.get("status", "unknown"),
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "name": caller_name,
+            "phone": caller_phone,
+            "status": status,
+            "timestamp": timestamp
         }
 
-        calls.append(entry)
-        print(f"✅ Recorded call → {entry}")
+        # Load existing calls
+        with open(CALLS_FILE, "r") as f:
+            calls = json.load(f)
 
-        return jsonify({"ok": True})
+        calls.append(new_call)
+
+        # Save updated calls
+        with open(CALLS_FILE, "w") as f:
+            json.dump(calls, f, indent=2)
+
+        print("✅ Saved call info:", new_call)
+        return jsonify({"success": True, "saved": new_call}), 200
 
     except Exception as e:
-        traceback.print_exc()
+        print("❌ Error handling callback:", e)
         return jsonify({"error": str(e)}), 500
 
-
-@app.route("/calls", methods=["GET"])
-def get_calls():
-    """View all recorded calls."""
-    return jsonify(calls)
-
-
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"message": "✅ Law Firm Caller API is running!"})
-
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
-
+    app.run(host="0.0.0.0", port=10000)
 
