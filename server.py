@@ -4,49 +4,58 @@ import re
 import traceback
 
 app = Flask(__name__)
-calls = []  # Store calls temporarily; can be replaced with a DB later
-
+calls = []  # temporary storage (replace with DB later)
 
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
-    data = request.json
     try:
+        data = request.json
+        print("\n📨 Incoming JSON:", data)  # 🧠 log entire payload
+
+        if not data:
+            return jsonify({"error": "No data received"}), 400
+
         call_id = data.get("call_id", "unknown")
         messages = data.get("messages", [])
         name = None
         phone = None
 
-        # Loop through all messages and intelligently detect name + phone
+        # 🧩 Analyze all messages to detect name & phone
         for msg in messages:
             text = msg.get("message", "").strip()
             lower = text.lower()
+            print(f"🗣 Message fragment: {text}")
 
-            # Detect possible name statements
+            # --- Detect possible name ---
             if any(keyword in lower for keyword in ["name", "i am", "i'm", "this is", "call me", "myself"]):
                 possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
                 if possible_names:
-                    filtered = [n for n in possible_names if n.lower() not in ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon"]]
+                    filtered = [n for n in possible_names if n.lower() not in 
+                                ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon"]]
                     if filtered:
                         name = " ".join(filtered[:2])
-                        print(f"[🧠 Detected name: {name}]")
+                        print(f"🧠 Detected name: {name}")
 
-            # Detect possible phone numbers
+            # --- Detect phone numbers ---
             digits = re.sub(r"\D", "", text)
             if len(digits) >= 7:
                 phone = digits
+                print(f"📞 Detected phone: {phone}")
 
-        # ✅ Record the call every time (not just on "ended")
+        # 🧠 If nothing detected, mark as unknown
         entry = {
+            "call_id": call_id,
             "name": name or "Unknown",
             "phone": phone or "Unknown",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "status": data.get("status", "unknown")
+            "status": data.get("status", "unknown"),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
-        print(f"📞 Recorded call — Name: {entry['name']}, Phone: {entry['phone']}, Status: {entry['status']}")
         calls.append(entry)
+        print(f"✅ Recorded call → {entry}")
 
         return jsonify({"ok": True})
+
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -54,10 +63,16 @@ def vapi_callback():
 
 @app.route("/calls", methods=["GET"])
 def get_calls():
+    """View all recorded calls."""
     return jsonify(calls)
 
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "✅ Law Firm API is running!"})
+    return jsonify({"message": "✅ Law Firm Caller API is running!"})
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+
 
