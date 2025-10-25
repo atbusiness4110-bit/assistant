@@ -89,7 +89,6 @@ def get_calls():
 
 @app.route("/calls", methods=["DELETE"])
 def delete_calls():
-    """Delete selected calls (both client & server)."""
     try:
         data = request.get_json(force=True)
         to_delete = data.get("calls", [])
@@ -119,6 +118,7 @@ def delete_calls():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route("/status")
@@ -197,6 +197,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
