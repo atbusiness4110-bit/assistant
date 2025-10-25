@@ -2,51 +2,69 @@ from flask import Flask, request, jsonify
 from datetime import datetime
 import re
 import traceback
+import json
 
 app = Flask(__name__)
-calls = []  # store calls temporarily
+calls = {}  # Stores one entry per call_id
 
 
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
-    data = request.json
+    """Receives call data from Vapi and extracts name + phone number."""
     try:
-        call_id = data.get("call_id", "unknown")
+        data = request.get_json(force=True, silent=True)
+
+        # Log everything coming from Vapi
+        print("📨 RAW DATA RECEIVED FROM VAPI:\n", json.dumps(data, indent=2))
+
+        if not data:
+            print("⚠️ No JSON received from Vapi!")
+            return jsonify({"error": "No data received"}), 400
+
+        # --- Extract core info ---
+        call_id = str(data.get("call_id") or data.get("id") or "unknown")
         messages = data.get("messages", [])
+        status = str(data.get("status", "")).lower()
+
         name = None
         phone = None
 
-        # Loop through all messages and intelligently detect name + phone
+        # --- Analyze all message text ---
         for msg in messages:
-            text = msg.get("message", "").strip()
-            lower = text.lower()
+            text = str(msg.get("message") or msg.get("text") or "").strip()
+            if not text:
+                continue
 
-            # Detect possible name statements
-            if any(keyword in lower for keyword in ["name", "i am", "i'm", "this is", "call me", "myself"]):
-                # Extract capitalized word(s) that look like names
-                possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
-                if possible_names:
-                    filtered = [n for n in possible_names if n.lower() not in ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon"]]
-                    if filtered:
-                        name = " ".join(filtered[:2])  # support first + last name
-                        print(f"[🧠 Detected name: {name}]")
+            # Detect possible names (any capitalized words, ignore greetings)
+            possible_names = re.findall(r"\b[A-Z][a-z]+\b", text)
+            if possible_names:
+                filtered = [
+                    n for n in possible_names
+                    if n.lower() not in ["hi", "hello", "thanks", "good", "morning", "evening", "afternoon", "bye"]
+                ]
+                if filtered:
+                    name = " ".join(filtered[:2])
 
-            # Detect possible phone numbers
+            # Detect possible phone numbers (digits only)
             digits = re.sub(r"\D", "", text)
             if len(digits) >= 7:
                 phone = digits
 
-        # Record only when the call ends
-        if data.get("status", "").lower() == "ended":
+        # --- Save once when call ends ---
+        if status == "ended" and call_id not in calls:
             entry = {
+                "call_id": call_id,
                 "name": name or "Unknown",
                 "phone": phone or "Unknown",
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
-            print(f"📞 FINAL CALL — Name: {entry['name']}, Phone: {entry['phone']}, Time: {entry['timestamp']}")
-            calls.append(entry)
+            calls[call_id] = entry
+            print(f"✅ SAVED FINAL CALL: {entry}")
+        else:
+            print(f"ℹ️ Ignored interim update (status={status})")
 
-        return jsonify({"ok": True})
+        return jsonify({"ok": True}), 200
+
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -54,16 +72,18 @@ def vapi_callback():
 
 @app.route("/calls", methods=["GET"])
 def get_calls():
-    return jsonify(calls)
+    """View all recorded calls."""
+    return jsonify(list(calls.values())), 200
 
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "✅ Law Firm API is running!"})
+    return jsonify({"message": "✅ Law Firm API is running and waiting for Vapi data."}), 200
 
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
 
 
 
