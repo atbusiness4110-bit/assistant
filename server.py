@@ -99,10 +99,12 @@ def delete_calls():
         before_count = len(calls)
 
         def match(c, d):
+            def normalize(t):
+                return str(t).split()[0:2]  # ignore seconds or AM/PM
             return (
                 c.get("name") == d.get("name")
                 and c.get("phone") == d.get("phone")
-                and c.get("timestamp") == d.get("timestamp")
+                and " ".join(normalize(c.get("timestamp", ""))) == " ".join(normalize(d.get("timestamp", "")))
             )
 
         remaining = [
@@ -197,6 +199,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
