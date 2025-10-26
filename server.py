@@ -124,35 +124,41 @@ def status():
 
 @app.route("/toggle", methods=["POST"])
 def toggle_vapi():
-    import requests, os
-
-    data = request.get_json() or {}
-    active = data.get("active", False)
-    vapi_key = os.getenv("VAPI_KEY")  # Store your key safely in Render environment
-
-    headers = {
-        "Authorization": f"Bearer {vapi_key}",
-        "Content-Type": "application/json"
-    }
-
     try:
-        if active:
-            # Start Vapi connection
-            r = requests.post(
-                "https://api.vapi.ai/v1/phone/connection/start",
-                headers=headers,
-                json={"connection": "lawfirm-bot"}
-            )
-        else:
-            # Stop Vapi connection
-            r = requests.post(
-                "https://api.vapi.ai/v1/phone/connection/stop",
-                headers=headers,
-                json={"connection": "lawfirm-bot"}
-            )
+        data = request.get_json(force=True)
+        active = data.get("active", False)
 
-        return jsonify({"ok": True, "status": r.status_code})
+        vapi_key = os.getenv("VAPI_KEY")
+        if not vapi_key:
+            return jsonify({"error": "Missing VAPI_KEY in environment"}), 400
+
+        headers = {
+            "Authorization": f"Bearer {vapi_key}",
+            "Content-Type": "application/json"
+        }
+
+        if active:
+            url = "https://api.vapi.ai/v1/phone/connection/start"
+            payload = {"connection": "lawfirm-bot"}
+            print("🔵 Starting Vapi connection...")
+        else:
+            url = "https://api.vapi.ai/v1/phone/connection/stop"
+            payload = {"connection": "lawfirm-bot"}
+            print("🔴 Stopping Vapi connection...")
+
+        r = requests.post(url, headers=headers, json=payload)
+
+        if r.status_code == 200:
+            print("✅ Vapi connection updated successfully.")
+            settings["bot_active"] = active
+            save_data()
+            return jsonify({"ok": True, "bot_active": active})
+        else:
+            print(f"⚠️ Vapi API error: {r.text}")
+            return jsonify({"ok": False, "error": r.text, "status": r.status_code}), 400
+
     except Exception as e:
+        print(f"❌ Error in /toggle: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -214,6 +220,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
