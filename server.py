@@ -123,34 +123,37 @@ def status():
 
 
 @app.route("/toggle", methods=["POST"])
-def toggle_bot():
-    """Toggles both the local flag and the actual VAPI bot status."""
-    settings["bot_active"] = not settings["bot_active"]
-    new_state = settings["bot_active"]
+def toggle_vapi():
+    import requests, os
 
-    save_data()
+    data = request.get_json() or {}
+    active = data.get("active", False)
+    vapi_key = os.getenv("VAPI_KEY")  # Store your key safely in Render environment
+
+    headers = {
+        "Authorization": f"Bearer {vapi_key}",
+        "Content-Type": "application/json"
+    }
 
     try:
-        headers = {"Authorization": f"Bearer {VAPI_KEY}"}
-        payload = {"bot_active": new_state}
+        if active:
+            # Start Vapi connection
+            r = requests.post(
+                "https://api.vapi.ai/v1/phone/connection/start",
+                headers=headers,
+                json={"connection": "lawfirm-bot"}
+            )
+        else:
+            # Stop Vapi connection
+            r = requests.post(
+                "https://api.vapi.ai/v1/phone/connection/stop",
+                headers=headers,
+                json={"connection": "lawfirm-bot"}
+            )
 
-        # You can modify this endpoint depending on Vapi’s API structure
-        vapi_response = requests.post(
-            f"{VAPI_BASE_URL}/bots/{VAPI_BOT_ID}/toggle",
-            json=payload,
-            headers=headers,
-            timeout=10
-        )
-
-        print(f"🔄 Vapi toggle response: {vapi_response.status_code}")
-        return jsonify({
-            "bot_active": new_state,
-            "vapi_status": vapi_response.status_code
-        })
-
+        return jsonify({"ok": True, "status": r.status_code})
     except Exception as e:
-        print(f"⚠️ Error toggling Vapi bot: {e}")
-        return jsonify({"bot_active": new_state, "error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/set-time-range", methods=["POST"])
@@ -211,6 +214,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
