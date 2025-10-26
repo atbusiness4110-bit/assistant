@@ -1,4 +1,4 @@
-import os, json, re, threading, logging, sys
+import os, json, re, threading, logging, sys, requests
 from datetime import datetime
 from flask import Flask, request, jsonify
 
@@ -21,6 +21,11 @@ settings = {
 }
 
 lock = threading.Lock()
+
+# --- VAPI CONFIG ---
+VAPI_KEY = os.getenv("VAPI_KEY")  # store this safely in Render → Environment tab
+VAPI_BOT_ID = "6b943f96-1b87-4f8b-ae90-172e51568880"
+VAPI_BASE_URL = "https://api.vapi.ai"
 
 # --- Helpers ---
 def within_active_hours():
@@ -106,8 +111,6 @@ def delete_calls():
         return jsonify({"error": str(e)}), 500
 
 
-
-
 @app.route("/status")
 def status():
     return jsonify({
@@ -121,9 +124,33 @@ def status():
 
 @app.route("/toggle", methods=["POST"])
 def toggle_bot():
+    """Toggles both the local flag and the actual VAPI bot status."""
     settings["bot_active"] = not settings["bot_active"]
+    new_state = settings["bot_active"]
+
     save_data()
-    return jsonify({"bot_active": settings["bot_active"]})
+
+    try:
+        headers = {"Authorization": f"Bearer {VAPI_KEY}"}
+        payload = {"bot_active": new_state}
+
+        # You can modify this endpoint depending on Vapi’s API structure
+        vapi_response = requests.post(
+            f"{VAPI_BASE_URL}/bots/{VAPI_BOT_ID}/toggle",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+
+        print(f"🔄 Vapi toggle response: {vapi_response.status_code}")
+        return jsonify({
+            "bot_active": new_state,
+            "vapi_status": vapi_response.status_code
+        })
+
+    except Exception as e:
+        print(f"⚠️ Error toggling Vapi bot: {e}")
+        return jsonify({"bot_active": new_state, "error": str(e)}), 500
 
 
 @app.route("/set-time-range", methods=["POST"])
@@ -184,6 +211,7 @@ if __name__ == "__main__":
     load_data()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
