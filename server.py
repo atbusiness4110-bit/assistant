@@ -63,21 +63,28 @@ def within_active_hours():
 
 # --- Auto-toggle worker ---
 def auto_toggle_worker():
-    """Auto-toggle only if NO manual override is active."""
+    """Runs in background every 60s to update bot_active automatically,
+    unless a manual override is set."""
     while True:
         try:
-            if settings.get("manual_override") is None:
-                active_hours = within_active_hours()
-                prev = settings["bot_active"]
-                if active_hours != prev:
-                    settings["bot_active"] = active_hours
-                    state = "ON" if active_hours else "OFF"
-                    print(f"⏱ Auto-toggle: Bot turned {state} (Mountain Time range)")
-                    save_settings()
-            # if manual_override is set, do nothing
+            active_hours = within_active_hours()
+            manual_override = settings.get("manual_override", None)
+
+            if manual_override is not None:
+                # Skip auto-toggle if user manually set ON/OFF
+                continue
+
+            prev = settings["bot_active"]
+            settings["bot_active"] = active_hours
+            if active_hours != prev:
+                state = "ON" if active_hours else "OFF"
+                print(f"⏱ Auto-toggle: Bot turned {state} (Mountain Time range)")
+                save_settings()
         except Exception as e:
             print(f"⚠️ Auto-toggle error: {e}")
-        _t.sleep(60)
+        finally:
+            import time as _t
+            _t.sleep(60)
 
 # --- Calls storage ---
 calls = []
@@ -117,16 +124,14 @@ def status():
 
 @app.route("/toggle", methods=["POST"])
 def toggle_vapi():
-    """Manual ON/OFF always overrides auto schedule until cleared."""
     data = request.get_json(force=True)
-    active = bool(data.get("active", False))
-
+    active = data.get("active", False)
     settings["bot_active"] = active
-    settings["manual_override"] = "on" if active else "off"
+    settings["manual_override"] = active  # mark manual control
     save_settings()
-
     print(f"🟢 Manual toggle → Bot turned {'ON' if active else 'OFF'} (manual_override set)")
-    return jsonify({"ok": True, "bot_active": active, "manual_override": settings["manual_override"]})
+    return jsonify({"ok": True, "bot_active": active})
+
 
 @app.route("/clear-override", methods=["POST"])
 def clear_override():
@@ -210,6 +215,14 @@ def vapi_callback():
     print(f"✅ Saved call: {name}, {phone}, {timestamp}")
     return jsonify({"ok": True})
 
+@app.route("/resume-auto", methods=["POST"])
+def resume_auto():
+    """Resets manual override and resumes auto schedule."""
+    settings["manual_override"] = None
+    save_settings()
+    print("🔄 Manual override cleared, resuming automatic schedule.")
+    return jsonify({"ok": True})
+
 # --- Run ---
 if __name__ == "__main__":
     load_settings()
@@ -217,6 +230,7 @@ if __name__ == "__main__":
     threading.Thread(target=auto_toggle_worker, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
