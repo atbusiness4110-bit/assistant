@@ -1,7 +1,8 @@
 import os, json, re, threading, logging, sys, requests
-from datetime import datetime, time
+from datetime import datetime
 from flask import Flask, request, jsonify
 from zoneinfo import ZoneInfo
+import time as _t
 
 # --- Logging setup ---
 logging.basicConfig(stream=sys.stdout, level=logging.INFO, force=True)
@@ -9,7 +10,6 @@ print = lambda *a, **kw: logging.info(" ".join(map(str, a)))
 
 # --- Flask setup ---
 app = Flask(__name__)
-bot_active = False
 
 CALLS_FILE = "calls.json"
 SETTINGS_FILE = "settings.json"
@@ -20,12 +20,12 @@ settings = {
     "bot_active": True,
     "active_start": "09:00 AM",
     "active_end": "05:00 PM",
-    "manual_override": None # "on", "off", or None (auto)
+    "manual_override": None  # "on", "off", or None (auto)
 }
 
 # --- Helpers ---
 def load_settings():
-    """Load settings from disk safely."""
+    """Load settings safely."""
     global settings
     if os.path.exists(SETTINGS_FILE):
         try:
@@ -38,7 +38,7 @@ def load_settings():
         save_settings()
 
 def save_settings():
-    """Save settings to disk safely."""
+    """Persist settings safely."""
     try:
         with open(SETTINGS_FILE, "w") as f:
             json.dump(settings, f, indent=2)
@@ -46,18 +46,16 @@ def save_settings():
         print(f"⚠️ Failed to save settings: {e}")
 
 def within_active_hours():
-    """Check if current time is within the Mountain Time active range."""
+    """Check if current Mountain Time is within active range."""
     try:
         tz = ZoneInfo("America/Denver")
         now = datetime.now(tz).time()
-
         start = datetime.strptime(settings["active_start"], "%I:%M %p").time()
         end = datetime.strptime(settings["active_end"], "%I:%M %p").time()
 
         if start <= end:
             return start <= now <= end
         else:
-            # handles overnight ranges like 10 PM to 6 AM
             return now >= start or now <= end
     except Exception as e:
         print(f"⚠️ Error in within_active_hours: {e}")
@@ -65,15 +63,10 @@ def within_active_hours():
 
 # --- Auto-toggle worker ---
 def auto_toggle_worker():
-    """Runs in background every 60s to update bot_active automatically unless manually overridden."""
+    """Auto-toggle only if NO manual override is active."""
     while True:
         try:
-            # If manual override present, do not auto-change
-            if settings.get("manual_override") in ("on", "off"):
-                # keep the server log small; periodically note override still active
-                # print(f"⏱ Manual override active: {settings['manual_override']}")
-                pass
-            else:
+            if settings.get("manual_override") is None:
                 active_hours = within_active_hours()
                 prev = settings["bot_active"]
                 if active_hours != prev:
@@ -81,13 +74,12 @@ def auto_toggle_worker():
                     state = "ON" if active_hours else "OFF"
                     print(f"⏱ Auto-toggle: Bot turned {state} (Mountain Time range)")
                     save_settings()
+            # if manual_override is set, do nothing
         except Exception as e:
             print(f"⚠️ Auto-toggle error: {e}")
-        finally:
-            import time as _t
-            _t.sleep(60)  # check every minute
+        _t.sleep(60)
 
-# --- Call storage ---
+# --- Calls storage ---
 calls = []
 
 def load_calls():
@@ -120,20 +112,29 @@ def status():
         "active_end": settings["active_end"],
         "within_hours": within_active_hours(),
         "manual_override": settings.get("manual_override"),
-        "server_time_mt": now.strftime("%Y-%m-%d %I:%M %p"),
+        "server_time_mt": now.strftime("%Y-%m-%d %I:%M %p MT")
     })
 
 @app.route("/toggle", methods=["POST"])
 def toggle_vapi():
+    """Manual ON/OFF always overrides auto schedule until cleared."""
     data = request.get_json(force=True)
     active = bool(data.get("active", False))
 
-    # record manual override so auto-worker won't immediately revert it
-    settings["manual_override"] = "on" if active else "off"
     settings["bot_active"] = active
+    settings["manual_override"] = "on" if active else "off"
     save_settings()
-    print(f"🟢 Bot manually turned {'ON' if active else 'OFF'} (manual_override={settings['manual_override']})")
+
+    print(f"🟢 Manual toggle → Bot turned {'ON' if active else 'OFF'} (manual_override set)")
     return jsonify({"ok": True, "bot_active": active, "manual_override": settings["manual_override"]})
+
+@app.route("/clear-override", methods=["POST"])
+def clear_override():
+    """Allow dashboard to return to automatic schedule mode."""
+    settings["manual_override"] = None
+    save_settings()
+    print("🔁 Manual override cleared → returning to automatic hours mode")
+    return jsonify({"ok": True, "manual_override": None})
 
 @app.route("/set-time-range", methods=["POST"])
 def set_time_range():
@@ -143,10 +144,11 @@ def set_time_range():
 
     settings["active_start"] = start
     settings["active_end"] = end
-    # reset manual override when admin changes scheduled hours
+    # changing schedule automatically clears override
     settings["manual_override"] = None
     save_settings()
-    print(f"🕓 Active hours updated: {start} – {end} (MT) — manual_override cleared")
+
+    print(f"🕓 Active hours updated: {start} – {end} (MT); manual_override cleared")
     return jsonify({"ok": True, "settings": settings})
 
 @app.route("/calls", methods=["GET"])
@@ -175,7 +177,6 @@ def delete_calls():
 
 @app.route("/vapi/callback", methods=["POST"])
 def vapi_callback():
-    """Handles incoming VAPI webhook calls and records them."""
     data = request.get_json(force=True)
     msg = data.get("message", {})
 
@@ -199,8 +200,8 @@ def vapi_callback():
         phone = digits[-10:]
 
     timestamp = datetime.now(ZoneInfo("America/Denver")).strftime("%Y-%m-%d %I:%M %p MT")
-
     new_call = {"name": name, "phone": phone, "timestamp": timestamp}
+
     load_calls()
     with lock:
         calls.append(new_call)
@@ -209,16 +210,14 @@ def vapi_callback():
     print(f"✅ Saved call: {name}, {phone}, {timestamp}")
     return jsonify({"ok": True})
 
-# --- Run Server ---
+# --- Run ---
 if __name__ == "__main__":
     load_settings()
     load_calls()
-
-    # Background thread to monitor hours
     threading.Thread(target=auto_toggle_worker, daemon=True).start()
-
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
