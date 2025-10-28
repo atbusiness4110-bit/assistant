@@ -9,6 +9,7 @@ print = lambda *a, **kw: logging.info(" ".join(map(str, a)))
 
 # --- Flask setup ---
 app = Flask(__name__)
+bot_active = False
 
 CALLS_FILE = "calls.json"
 SETTINGS_FILE = "settings.json"
@@ -19,6 +20,7 @@ settings = {
     "bot_active": True,
     "active_start": "09:00 AM",
     "active_end": "05:00 PM",
+    "manual_override": None # "on", "off", or None (auto)
 }
 
 # --- Helpers ---
@@ -63,16 +65,22 @@ def within_active_hours():
 
 # --- Auto-toggle worker ---
 def auto_toggle_worker():
-    """Runs in background every 60s to update bot_active automatically."""
+    """Runs in background every 60s to update bot_active automatically unless manually overridden."""
     while True:
         try:
-            active_hours = within_active_hours()
-            prev = settings["bot_active"]
-            settings["bot_active"] = active_hours
-            if active_hours != prev:
-                state = "ON" if active_hours else "OFF"
-                print(f"⏱ Auto-toggle: Bot turned {state} (Mountain Time range)")
-                save_settings()
+            # If manual override present, do not auto-change
+            if settings.get("manual_override") in ("on", "off"):
+                # keep the server log small; periodically note override still active
+                # print(f"⏱ Manual override active: {settings['manual_override']}")
+                pass
+            else:
+                active_hours = within_active_hours()
+                prev = settings["bot_active"]
+                if active_hours != prev:
+                    settings["bot_active"] = active_hours
+                    state = "ON" if active_hours else "OFF"
+                    print(f"⏱ Auto-toggle: Bot turned {state} (Mountain Time range)")
+                    save_settings()
         except Exception as e:
             print(f"⚠️ Auto-toggle error: {e}")
         finally:
@@ -111,17 +119,21 @@ def status():
         "active_start": settings["active_start"],
         "active_end": settings["active_end"],
         "within_hours": within_active_hours(),
+        "manual_override": settings.get("manual_override"),
         "server_time_mt": now.strftime("%Y-%m-%d %I:%M %p"),
     })
 
 @app.route("/toggle", methods=["POST"])
 def toggle_vapi():
     data = request.get_json(force=True)
-    active = data.get("active", False)
+    active = bool(data.get("active", False))
+
+    # record manual override so auto-worker won't immediately revert it
+    settings["manual_override"] = "on" if active else "off"
     settings["bot_active"] = active
     save_settings()
-    print(f"🟢 Bot manually turned {'ON' if active else 'OFF'}")
-    return jsonify({"ok": True, "bot_active": active})
+    print(f"🟢 Bot manually turned {'ON' if active else 'OFF'} (manual_override={settings['manual_override']})")
+    return jsonify({"ok": True, "bot_active": active, "manual_override": settings["manual_override"]})
 
 @app.route("/set-time-range", methods=["POST"])
 def set_time_range():
@@ -131,8 +143,10 @@ def set_time_range():
 
     settings["active_start"] = start
     settings["active_end"] = end
+    # reset manual override when admin changes scheduled hours
+    settings["manual_override"] = None
     save_settings()
-    print(f"🕓 Active hours updated: {start} – {end} (MT)")
+    print(f"🕓 Active hours updated: {start} – {end} (MT) — manual_override cleared")
     return jsonify({"ok": True, "settings": settings})
 
 @app.route("/calls", methods=["GET"])
@@ -205,6 +219,7 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
