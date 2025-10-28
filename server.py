@@ -124,13 +124,19 @@ def status():
 
 @app.route("/toggle", methods=["POST"])
 def toggle_vapi():
-    data = request.get_json(force=True)
-    active = data.get("active", False)
-    settings["bot_active"] = active
-    settings["manual_override"] = active  # mark manual control
-    save_settings()
-    print(f"🟢 Manual toggle → Bot turned {'ON' if active else 'OFF'} (manual_override set)")
-    return jsonify({"ok": True, "bot_active": active})
+    try:
+        data = request.get_json(force=True)
+        active = bool(data.get("active", False))
+        settings["bot_active"] = active
+        settings["manual_override"] = True  # let UI override schedule
+        save_settings()
+
+        state = "ON" if active else "OFF"
+        print(f"🟢 Manual toggle → Bot turned {state} (manual_override set)")
+        return jsonify({"ok": True, "bot_active": active}), 200
+    except Exception as e:
+        print(f"⚠️ Toggle error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/clear-override", methods=["POST"])
@@ -230,6 +236,7 @@ if __name__ == "__main__":
     threading.Thread(target=auto_toggle_worker, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
