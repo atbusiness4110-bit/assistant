@@ -29,6 +29,41 @@ from functools import wraps
 from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
+
+USERS_FILE = "users.json"
+
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return []
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=2)
+
+@app.route("/register", methods=["POST"])
+def register_user():
+    data = request.json
+    users = load_users()
+    if any(u["username"] == data["username"] for u in users):
+        return jsonify({"success": False, "message": "Username already exists"})
+    users.append({
+        "name": data.get("name"),
+        "username": data.get("username"),
+        "password": data.get("password")  # plain text for now
+    })
+    save_users(users)
+    return jsonify({"success": True, "message": "Account created successfully"})
+
+@app.route("/login", methods=["POST"])
+def login_user():
+    data = request.json
+    users = load_users()
+    for u in users:
+        if u["username"] == data["username"] and u["password"] == data["password"]:
+            return jsonify({"success": True, "name": u["name"]})
+    return jsonify({"success": False, "message": "Invalid username or password"})
 # ---------------------------
 # Logging & Flask app
 # ---------------------------
@@ -682,6 +717,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     log.info("Starting Lexi server on port %s", port)
     app.run(host="0.0.0.0", port=port, threaded=True)
+
 
 
 
