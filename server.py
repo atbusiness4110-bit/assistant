@@ -124,13 +124,15 @@ def auth_login():
                 "message": "Login successful",
                 "token": token,
                 "user_id": user.id,
-                "name": user.name
+                "name": user.username
             })
         else:
             return jsonify({"success": False, "message": "Invalid username or password"}), 401
     except Exception as e:
-        log.exception("auth_login failed")
+        import traceback
+        traceback.print_exc()  # ✅ show exact cause in Render logs
         return jsonify({"success": False, "message": str(e)}), 500
+
 
 # --------------------------------------------
 # CALL LOG ROUTES
@@ -198,6 +200,7 @@ def vapi_callback():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
