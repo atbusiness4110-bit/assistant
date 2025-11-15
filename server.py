@@ -484,11 +484,22 @@ def start_background_threads():
     log.info("Started ARI WS background thread")
 
 
+from flask import send_from_directory
+
+@app.route('/version.json')
+def send_version():
+    return send_from_directory('static', 'version.json')
+
+@app.route('/update.zip')
+def send_update():
+    return send_from_directory('static', 'update.zip')
+
 if __name__ == "__main__":
     # Start ARI WS client in background
     start_background_threads()
     # Flask app
     app.run(host="0.0.0.0", port=PORT, threaded=True)
+
 
 
 
